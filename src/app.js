@@ -6,6 +6,10 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const crypto = require('crypto');
 
+const rateLimit = require("express-rate-limit");
+const analyticsRoutes = require("./routes/analytics");
+
+
 const { notFound, errorHandler } = require('./middleware/error');
 const { ALLOWED_ORIGIN, NODE_ENV, UPLOAD_DIR } = require('./config/env');
 
@@ -67,6 +71,7 @@ app.use('/static', express.static(uploadsDir, {
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', env: NODE_ENV || 'development' });
 });
+const jobRequestsRoutes = require("./routes/jobRequests");
 
 // ====== Routes ======
 app.use('/api/auth',          require('./routes/authRoutes'));
@@ -79,6 +84,10 @@ app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/reports',       require('./routes/reportRoutes'));
 app.use('/api/taxonomies',    require('./routes/taxonomyRoutes'));
 app.use('/api/files',         require('./routes/fileRoutes'));
+app.use("/api/job-requests", jobRequestsRoutes);
+app.use("/api/analytics", analyticsRoutes);
+
+
 
 // (اختياري) لو فعّلت هذه الراوترات الإضافية:
 try { app.use('/api/admin/audit-logs', require('./routes/adminAuditRoutes')); } catch {}
@@ -88,5 +97,15 @@ try { app.use('/api/verify',            require('./routes/verificationRoutes'));
 // ====== أخطاء عامة ======
 app.use(notFound);
 app.use(errorHandler);
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 دقيقة
+  max: 100,                 // 100 طلب
+  message: "تم تجاوز الحد المسموح من الطلبات. حاول لاحقًا.",
+  standardHeaders: true,    // يرسل هيدرز معلومات
+  legacyHeaders: false,     // يعطل X-RateLimit
+});
+
+app.use(globalLimiter);
 
 module.exports = app;
