@@ -11,7 +11,8 @@ const { ALLOWED_ORIGIN, NODE_ENV, UPLOAD_DIR } = require('./config/env');
 
 // ✅ أنشئ التطبيق
 const app = express();
-
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
 // ====== أمان وأساسيات ======
 app.set('x-powered-by', false);
 app.disable('etag'); // اختياري: لتفادي caching غير مرغوب

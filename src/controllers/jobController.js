@@ -208,39 +208,84 @@ exports.count = async (req, res, next) => {
   }
 };
 
+const JobView = require('../models/JobView');
+
+function buildViewerKey(req, res) {
+  // لو عندك auth middleware يحط req.user
+  if (req.user?.id || req.user?._id) {
+    const uid = String(req.user.id || req.user._id);
+    return { key: `u:${uid}`, setCookie: false };
+  }
+  // زائر: نحاول نقرأ anonId من الكوكي
+  let anonId = req.cookies?.anonId;
+  let setCookie = false;
+  if (!anonId) {
+    anonId = crypto.randomUUID();
+    setCookie = true;
+    // كوكي آمنة لسنة
+    res.cookie('anonId', anonId, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 1000 * 60 * 60 * 24 * 365, // سنة
+      path: '/',
+    });
+  }
+  return { key: `a:${anonId}`, setCookie };
+}
+
 exports.getById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const job = await Job.findByIdAndUpdate(
-      id,
-      { $inc: { viewsCount: 1 } },
-      { new: true }
-    )
-      .populate({
-        path: "companyId",            
-        select: "name slug logo about", // ✅ أضفنا about
-      })
+    // 1) اجلب الوظيفة أولاً (بدون زيادة)
+    const jobDoc = await Job.findById(id)
+      .populate({ path: "companyId", select: "name slug logo about" })
       .lean();
 
-    if (!job) {
+    if (!jobDoc) {
       return res.status(404).json({ message: "الوظيفة غير موجودة" });
     }
 
-    // توحيد: نرجع company ككائن مستقل
+    // 2) حدّد هوية المشاهد
+    const { key: viewerKey } = buildViewerKey(req, res);
+
+    // 3) جرّب تسجيل مشاهدة فريدة (dedupe)
+    let incremented = false;
+    try {
+      const upsertRes = await JobView.updateOne(
+        { jobId: jobDoc._id, viewerKey },
+        {
+          $setOnInsert: { jobId: jobDoc._id, viewerKey, firstViewedAt: new Date() },
+          $set: { lastViewedAt: new Date() },
+        },
+        { upsert: true }
+      );
+
+      // إذا كانت أول مرّة لهذا الشخص → نزود العداد
+      if (upsertRes.upsertedCount === 1) {
+        await Job.updateOne({ _id: jobDoc._id }, { $inc: { viewsCount: 1 } });
+        incremented = true;
+      }
+    } catch (e) {
+      // لو خبطنا unique index من سباق، ببساطة نتجاهل الزيادة (صار محسوب)
+      if (e?.code !== 11000) throw e;
+    }
+
+    // 4) رجّع النتيجة مع company ككائن مستقل
     const normalizedJob = {
-      ...job,
-      company: job.companyId
-        ? {
-            _id: job.companyId._id,
-            name: job.companyId.name,
-            slug: job.companyId.slug,
-            logo: job.companyId.logo,
-            about: job.companyId.about, // ✅ نرجع about
-          }
-        : null,
+      ...jobDoc,
+      // حدّث viewsCount في الاستجابة لو زدناه الآن
+      viewsCount: incremented ? (Number(jobDoc.viewsCount || 0) + 1) : jobDoc.viewsCount,
+      company: jobDoc.companyId ? {
+        _id: jobDoc.companyId._id,
+        name: jobDoc.companyId.name,
+        slug: jobDoc.companyId.slug,
+        logo: jobDoc.companyId.logo,
+        about: jobDoc.companyId.about,
+      } : null,
     };
-    delete normalizedJob.companyId; // لو مش محتاج الـ id المرجعي
+    delete normalizedJob.companyId;
 
     return res.json({ job: normalizedJob });
   } catch (err) {
@@ -309,6 +354,25 @@ exports.remove = async (req, res) => {
     await Company.updateOne({ _id: job.companyId }, { $inc: { activeJobsCount: -1 } });
   }
   return ok(res, { removed: true });
+};
+
+exports.getFeaturedJobs = async (req, res) => {
+  try {
+    const jobs = await Job.find({
+      isFeatured: true,
+      isApproved: true,   // فقط الوظائف المعتمدة
+      status: "open",     // مفتوحة
+      archived: false     // غير مؤرشفة
+    })
+      .sort({ createdAt: -1 }) // الأحدث أولاً
+      .limit(3)               // تحدد العدد مثلاً 20
+      .populate("companyId", "name logo"); // تجيب اسم/لوجو الشركة
+
+    res.json({ jobs });
+  } catch (err) {
+    console.error("❌ خطأ عند جلب الوظائف المميزة:", err);
+    res.status(500).json({ message: "حدث خطأ في السيرفر" });
+  }
 };
 
 

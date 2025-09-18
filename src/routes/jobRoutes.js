@@ -55,6 +55,7 @@ router.get(
 );
 
 router.get('/count', ctrl.count);
+router.get("/featured", ctrl.getFeaturedJobs);
 
 
 // GET /api/jobs/:id — عامة

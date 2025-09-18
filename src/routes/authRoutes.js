@@ -7,7 +7,6 @@ const { auth } = require('../middleware/auth');
 
 const authCtrl = require('../controllers/authController');
 const userCtrl = require('../controllers/userController'); // ← me هنا
-
 const { ROLES } = require('../utils/roles');
 
 /* ===================== Auth: Register / Login / Tokens ===================== */
@@ -49,26 +48,47 @@ router.post('/logout-all', auth, asyncHandler(authCtrl.logoutAll));
 // ربط /me مع userController.me لتفادي الخلط مع authController
 router.get('/me', auth, asyncHandler(userCtrl.me));
 
-/* =========================== Password Reset (اختياري) =========================== */
+/* ======================= Password Reset (نسيت كلمة المرور) ======================= */
+/**
+ * لا نكشف وجود البريد: الدالة تتعامل وتعيد OK عام دائمًا.
+ * email اختياري في البادي (مع normalizeEmail + isEmail عند التوفير).
+ */
 router.post(
-  '/password/request-reset',
-  body('email').normalizeEmail().isEmail(),
+  '/password/forgot',
+  body('email').optional({ nullable: true }).normalizeEmail().isEmail(),
   validate,
   asyncHandler(authCtrl.requestPasswordReset)
 );
 
+/**
+ * التحقق من صلاحية توكن إعادة التعيين قبل عرض نموذج كلمة المرور الجديدة.
+ */
+router.post(
+  '/password/reset/verify',
+  body('token').isString().isLength({ min: 20, max: 512 }),
+  validate,
+  asyncHandler(authCtrl.verifyPasswordResetToken)
+);
+
+/**
+ * تنفيذ إعادة التعيين: token + newPassword
+ * نتحقق من قوة كلمة المرور هنا أيضًا (وموجود تحقق إضافي داخل الكنترولر).
+ */
 router.post(
   '/password/reset',
-  body('token').isString().isLength({ min: 10 }),
-  body('newPassword').isString().isLength({ min: 6 }),
+  body('token').isString().isLength({ min: 20, max: 512 }),
+  body('newPassword')
+    .isString()
+    .isLength({ min: 8 })
+    .matches(/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('كلمة المرور يجب أن تكون 8+ وتحتوي حرفًا صغيرًا وكبيرًا ورقمًا'),
   validate,
-  asyncHandler(authCtrl.resetPassword)
+  asyncHandler(authCtrl.resetPasswordWithToken)
 );
 
 /* ======================= Email Verification via OTP ======================== */
 /**
  * إصدار/إعادة إرسال OTP بدون مصادقة: يتطلب email
- * Controller: authCtrl.requestEmailVerification
  */
 router.post(
   '/verify-email/request',
@@ -80,11 +100,7 @@ router.post(
 /**
  * إصدار/إعادة إرسال OTP مع مصادقة: يستخدم المستخدم الحالي (لا يحتاج email)
  */
-router.post(
-  '/verify-email/request/me',
-  auth,
-  asyncHandler(authCtrl.requestEmailVerification)
-);
+router.post('/verify-email/request/me', auth, asyncHandler(authCtrl.requestEmailVerification));
 
 /**
  * تأكيد OTP بدون مصادقة: يتطلب email + otp (٦ أرقام)
@@ -92,10 +108,7 @@ router.post(
 router.post(
   '/verify-email/confirm',
   body('email').normalizeEmail().isEmail(),
-  body('otp')
-    .isString()
-    .matches(/^\d{6}$/)
-    .withMessage('OTP يجب أن يكون 6 أرقام'),
+  body('otp').isString().matches(/^\d{6}$/).withMessage('OTP يجب أن يكون 6 أرقام'),
   validate,
   asyncHandler(authCtrl.confirmEmailVerification)
 );
@@ -106,10 +119,7 @@ router.post(
 router.post(
   '/verify-email/confirm/me',
   auth,
-  body('otp')
-    .isString()
-    .matches(/^\d{6}$/)
-    .withMessage('OTP يجب أن يكون 6 أرقام'),
+  body('otp').isString().matches(/^\d{6}$/).withMessage('OTP يجب أن يكون 6 أرقام'),
   validate,
   asyncHandler(authCtrl.confirmEmailVerification)
 );
