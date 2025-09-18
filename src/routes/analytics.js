@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Visit = require("../models/Visit");
-const BUCKET_MS = 600000;
+const BUCKET_MS = 50000;
 
 router.post("/track", async (req, res) => {
   try {
@@ -24,8 +24,8 @@ router.post("/track", async (req, res) => {
           ip: req.ip,
           userAgent: req.headers["user-agent"],
           tsBucket,
-          createdAt: new Date(),
-        },
+          createdAt: new Date()
+        }
       },
       { upsert: true }
     );
@@ -41,6 +41,7 @@ router.post("/track", async (req, res) => {
   }
 });
 
+
 // إحصائيات
 router.get("/stats", async (req, res) => {
   try {
@@ -51,7 +52,7 @@ router.get("/stats", async (req, res) => {
     if (from && to) {
       filter.createdAt = {
         $gte: new Date(from),
-        $lte: new Date(to),
+        $lte: new Date(to)
       };
     }
 
@@ -75,7 +76,7 @@ router.get("/stats", async (req, res) => {
       { $match: filter },
       { $group: { _id: "$path", views: { $sum: 1 } } },
       { $sort: { views: -1 } },
-      { $limit: 10 },
+      { $limit: 10 }
     ]);
 
     res.json({
@@ -83,14 +84,14 @@ router.get("/stats", async (req, res) => {
       today: {
         uniqueVisitors: todayVisitors.length,
         sessions: todaySessions.length,
-        pageViews: todayPageViews,
+        pageViews: todayPageViews
       },
       total: {
         uniqueVisitors: totalVisitors.length,
         sessions: totalSessions.length,
-        pageViews: totalPageViews,
+        pageViews: totalPageViews
       },
-      topPages,
+      topPages
     });
   } catch (err) {
     console.error(err);

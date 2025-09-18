@@ -6,6 +6,9 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const crypto = require('crypto');
 
+const cron = require("node-cron");
+const Ad = require("./models/Ad");
+
 const rateLimit = require("express-rate-limit");
 const analyticsRoutes = require("./routes/analytics");
 
@@ -72,6 +75,7 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', env: NODE_ENV || 'development' });
 });
 const jobRequestsRoutes = require("./routes/jobRequests");
+const adsRoutes = require("./routes/ads");
 
 // ====== Routes ======
 app.use('/api/auth',          require('./routes/authRoutes'));
@@ -86,6 +90,7 @@ app.use('/api/taxonomies',    require('./routes/taxonomyRoutes'));
 app.use('/api/files',         require('./routes/fileRoutes'));
 app.use("/api/job-requests", jobRequestsRoutes);
 app.use("/api/analytics", analyticsRoutes);
+app.use("/api/ads", adsRoutes);
 
 
 
@@ -106,6 +111,17 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,     // يعطل X-RateLimit
 });
 
+
+
 app.use(globalLimiter);
+
+
+cron.schedule("0 0 * * *", async () => {
+  await Ad.updateMany(
+    { expiresAt: { $lt: new Date() } },
+    { status: "expired" }
+  );
+  console.log("🔄 تم تعطيل الإعلانات المنتهية");
+});
 
 module.exports = app;
