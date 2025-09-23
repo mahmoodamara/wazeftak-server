@@ -120,13 +120,11 @@ exports.stats = async (req, res) => {
 
 // === Company Jobs ===
 // controllers/companyController.js
-
 exports.listCompanyJobs = async (req, res) => {
-  const { id: companyId } = req.params;           // :id من الراوت
-  const page = parsePagination(req.query);        // { page, limit }
+  const { id: companyId } = req.params;
+  const page = parsePagination(req.query);
   const { q, city, jobTypeSlug, seniority } = req.query;
 
-  // CSV helper
   const csv = (v) =>
     String(v)
       .split(',')
@@ -136,7 +134,7 @@ exports.listCompanyJobs = async (req, res) => {
   const fieldIn = req.query.fieldSlugs ? csv(req.query.fieldSlugs) : null;
   const skillIn = req.query.skillSlugs ? csv(req.query.skillSlugs) : null;
 
-  // هل المستخدم مالك الشركة أو أدمن؟
+  // هل المستخدم مالك/أدمن؟
   let canSeeAll = false;
   if (req.auth) {
     if (req.auth.role === 'admin') {
@@ -150,7 +148,7 @@ exports.listCompanyJobs = async (req, res) => {
   // فلتر أساسي
   const filter = { companyId };
 
-  // قيود الرؤية العامة (لغير المالك/الأدمن)
+  // قيود الرؤية العامة
   if (!canSeeAll) {
     filter.archived = false;
     filter.status = 'open';
@@ -166,25 +164,25 @@ exports.listCompanyJobs = async (req, res) => {
   if (req.query.skillSlug) filter.skillSlugs = req.query.skillSlug;
 
   if (fieldIn && fieldIn.length) filter.fieldSlugs = { $in: fieldIn };
-  if (skillIn && skillIn.length) filter.skillSlgs = { $in: skillIn }; // لاحظ التصحيح إن لزمك: skillSlugs
+  if (skillIn && skillIn.length) filter.skillSlugs = { $in: skillIn }; // ✅ تصحيح هنا
 
-  // بحث نصي آمن
+  // بحث نصي
   if (q && q.trim()) {
     const esc = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp(esc, 'i');
     filter.$or = [{ title: rx }, { description: rx }];
   }
 
-  // تحكم إضافي متاح فقط للمالك/الأدمن
+  // تحكم إضافي للمالك/الأدمن
   if (canSeeAll) {
     if (Object.prototype.hasOwnProperty.call(req.query, 'archived')) {
-      filter.archived = !!req.query.archived; // Boolean بعد toBoolean()
+      filter.archived = toBool(req.query.archived);
     }
     if (req.query.status) {
-      filter.status = req.query.status; // open | closed | paused | draft ...
+      filter.status = req.query.status;
     }
     if (Object.prototype.hasOwnProperty.call(req.query, 'isApproved')) {
-      filter.isApproved = !!req.query.isApproved; // Boolean بعد toBoolean()
+      filter.isApproved = toBool(req.query.isApproved);
     }
   }
 
@@ -193,9 +191,46 @@ exports.listCompanyJobs = async (req, res) => {
   const sortDir = (req.query.sortDir || 'desc').toLowerCase() === 'asc' ? 1 : -1;
   const sort = { [sortBy]: sortDir, _id: -1 };
 
-  // الحقول المعادة للـ UI
-  const projection =
-    '_id title city jobTypeSlug seniority fieldSlugs skillSlugs isFeatured status isApproved archived createdAt';
+  // ====== projection: دعم fields من الكلاينت + افتراضي يتضمن المقاييس ======
+  // allowlist لتأمين الحقول
+  const ALLOW = new Set([
+    '_id', 'title', 'city', 'slug', 'createdAt',
+    'isFeatured', 'jobTypeSlug', 'seniority',
+    'fieldSlugs', 'skillSlugs', 'status', 'isApproved', 'archived',
+    'applicantsCount', 'viewsCount', // 👈 المقاييس المطلوبة
+    // أضف حقولًا أخرى لو احتجتها
+  ]);
+
+  // افتراضي آمن
+  const DEFAULT_FIELDS = [
+    '_id', 'title', 'city', 'slug', 'createdAt',
+    'isFeatured', 'jobTypeSlug', 'seniority',
+    'fieldSlugs', 'skillSlugs', 'status', 'isApproved', 'archived',
+    'applicantsCount', 'viewsCount', // 👈 أهم سطرين
+  ];
+
+  let projectionFields = DEFAULT_FIELDS;
+
+  if (req.query.fields && String(req.query.fields).trim()) {
+    const reqFields = String(req.query.fields)
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((f) => ALLOW.has(f));
+
+    if (reqFields.length) {
+      // تأكد من وجود الحدّ الأدنى دائمًا
+      const MIN = ['_id', 'title', 'createdAt'];
+      const set = new Set([...reqFields, ...MIN]);
+
+      // لو المستخدم فرز على حقل غير موجود ضمن projection، أضِفه (اختياري)
+      if (ALLOW.has(sortBy)) set.add(sortBy);
+
+      projectionFields = Array.from(set);
+    }
+  }
+
+  const projection = projectionFields.join(' ');
 
   const skip = (page.page - 1) * page.limit;
 
@@ -204,19 +239,15 @@ exports.listCompanyJobs = async (req, res) => {
     Job.countDocuments(filter),
   ]);
 
-  // ⭐️ دعم شكلين للاستجابة:
-  // - flat=array عندما ?flat=1 أو ?shape=array
-  // - message/meta/data في الحالات الأخرى
   const wantFlat =
-    req.query.flat === '1' ||
-    String(req.query.flat).toLowerCase() === 'true' ||
-    String(req.query.shape).toLowerCase() === 'array';
+    (req.query.flat && toBool(req.query.flat)) ||
+    (req.query.shape && String(req.query.shape).toLowerCase() === 'array');
 
   if (wantFlat) {
-    return ok(res, jobs); // يعيد المصفوفة فقط
+    // سيصبح الرد { message, data: [...] } عبر util ok()
+    return ok(res, jobs);
   }
 
-  // ✅ شكل موحّد: message + meta + data
   return res.status(200).json({
     message: 'تم',
     meta: {
