@@ -3,6 +3,7 @@ const Job = require('../models/Job');
 const Company = require('../models/Company');
 const { ok, withPagination, created } = require('../utils/responses');
 const { parsePagination } = require('../utils/pagination');
+const { notifyUsersForJob } = require('../services/jobAlerts');
 
 function csvToArray(v) {
   return String(v)
@@ -294,13 +295,11 @@ exports.getById = async (req, res) => {
   }
 };
 
-
 exports.create = async (req, res) => {
-  // استنتاج الشركة المملوكة للمستخدم الحالي
-  const owned = await Company.findOne({ ownerId: req.auth.id }).select('_id');
+  // الشركة المملوكة للمستخدم
+  const owned = await Company.findOne({ ownerId: req.auth.id }).select('_id name');
   if (!owned) return res.status(403).json({ message: 'لا توجد شركة مرتبطة بالحساب' });
 
-  // ملاحظة: city مطلوبة حسب الراوتر والـ schema
   const payload = {
     companyId:   owned._id,
     title:       req.body.title,
@@ -317,7 +316,20 @@ exports.create = async (req, res) => {
   };
 
   const doc = await Job.create(payload);
-  return created(res, { job: doc });
+
+  // أعد الاستجابة فورًا (لا تحجب المستخدم)
+  created(res, { job: doc });
+
+  // ثم شغّل التنبيهات في الخلفية بدون انتظار
+  // يمكنك تشغيلها بجدولة/Queue لاحقًا (Bull/Cloud Tasks) — الآن fire-and-forget:
+  process.nextTick(() => {
+    notifyUsersForJob(doc, {
+      companyName: owned?.name || 'شركة',
+      jobUrlBuilder: (job) => `https://wazeftak.netlify.app/jobs/${job._id}`,
+    }).catch((err) => {
+      console.error('[jobAlerts] notify failed:', err?.message || err);
+    });
+  });
 };
 
 exports.update = async (req, res) => {

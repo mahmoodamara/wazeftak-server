@@ -21,6 +21,7 @@ city: { type: String, trim: true }, // بدون required
 }, { timestamps: true });
 
 userSchema.index({ role: 1, emailVerified: 1, phoneVerified: 1 });
+userSchema.index({ profession: 1, role: 1, emailVerified: 1, disabled: 1 });
 
 userSchema.set('toJSON', {
   virtuals: true,
