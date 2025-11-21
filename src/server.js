@@ -3,14 +3,9 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 
-
-
 const app = require("./app");
 const connectDB = require("./config/db");
 const { PORT, NODE_ENV, UPLOAD_DIR } = require("./config/env");
-
-
-
 
 (async () => {
   try {

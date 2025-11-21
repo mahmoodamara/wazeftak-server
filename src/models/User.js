@@ -13,6 +13,7 @@ city: { type: String, trim: true }, // بدون required
   // تحقق/تعطيل (آمنة للإضافة لاحقاً)
   emailVerified: { type: Boolean, default: false, index: true },
   emailVerifiedAt: { type: Date }, // ✅ جديد (اختياري)
+profession: { type: String, trim: true, minlength: 2, maxlength: 100 },
 
   phoneVerified: { type: Boolean, default: false, index: true },
   disabled:      { type: Boolean, default: false, index: true },

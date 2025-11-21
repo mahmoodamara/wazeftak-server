@@ -91,6 +91,8 @@ app.use('/api/files',         require('./routes/fileRoutes'));
 app.use("/api/job-requests", jobRequestsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/ads", adsRoutes);
+const leadsRouter = require("./routes/leads.router");
+app.use("/api/leads", leadsRouter);
 
 
 
