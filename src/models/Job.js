@@ -8,6 +8,22 @@ const jobSchema = new mongoose.Schema({
   type:        { type: String, enum: ['full_time','part_time','contract','internship','temporary'], index: true },
   tags:        [{ type: String, trim: true, lowercase: true, maxlength: 40 }],
 
+  // 🔥 الراتب + يومية
+  salary: {
+    mode: {
+      type: String,
+      enum: ['hourly','daily','monthly','yearly'],
+      default: 'monthly'
+    },
+    min: { type: Number, min: 0 },
+    max: { type: Number, min: 0 },
+    currency: {
+      type: String,
+      default: 'ILS',
+      uppercase: true
+    }
+  },
+
   // قنوات التقديم
   applyMethod: { type: String, enum: ['in_app','email','whatsapp','external_url'], default: 'in_app' },
   applyTarget: { type: String, trim: true },
@@ -31,6 +47,23 @@ const jobSchema = new mongoose.Schema({
   jobTypeSlug:   { type: String, lowercase: true, trim: true }
 }, { timestamps: true });
 
+
+// ===============================
+// 🔥 فالييديشن خاص للراتب
+// ===============================
+jobSchema.pre('validate', function(next) {
+  const s = this.salary;
+  if (s && s.min != null && s.max != null && s.min > s.max) {
+    return next(new Error('الحد الأدنى للراتب لا يمكن أن يكون أكبر من الحد الأقصى'));
+  }
+  next();
+});
+
+
+// ===============================
+// باقي الكود كما هو
+// ===============================
+
 jobSchema.index({ companyId: 1, createdAt: -1 });
 jobSchema.index({ companyId: 1, status: 1, archived: 1 });
 
@@ -50,18 +83,23 @@ jobSchema.set('toJSON', {
 
 jobSchema.path('applyTarget').validate(function(v) {
   if (this.applyMethod === 'in_app') return true;
-  if (v == null || String(v).trim().length === 0) return false;
-  const val = String(v).trim();
+  if (!v || !v.trim()) return false;
+
+  const val = v.trim();
   if (this.applyMethod === 'email') return val.includes('@');
   if (this.applyMethod === 'whatsapp') return /^(\+?\d[\d\s-]{6,}|https?:\/\/wa\.me\/\d+)/i.test(val);
   if (this.applyMethod === 'external_url') return /^https?:\/\//i.test(val);
+
   return true;
 }, 'applyTarget مطلوب/غير صالح بالنسبة لقناة التقديم');
 
 jobSchema.post('save', async function(doc, next) {
   try {
     if (doc.isNew && !doc.archived) {
-      await mongoose.model('Company').updateOne({ _id: doc.companyId }, { $inc: { activeJobsCount: 1 } });
+      await mongoose.model('Company').updateOne(
+        { _id: doc.companyId },
+        { $inc: { activeJobsCount: 1 } }
+      );
     }
     next();
   } catch (e) { next(e); }
