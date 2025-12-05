@@ -10,24 +10,20 @@ const leadSchema = new Schema(
       index: true,
     },
 
-    // مشترك
     name: { type: String, required: true, trim: true, maxlength: 150 },
     phone: { type: String, required: true, trim: true, maxlength: 30, index: true },
     email: { type: String, trim: true, lowercase: true, maxlength: 200, index: true },
     city: { type: String, trim: true, maxlength: 120 },
 
-    // باحث عن عمل
     seeker_role: { type: String, trim: true, maxlength: 160 },
     seeker_experience: { type: String, trim: true, maxlength: 160 },
     seeker_notes: { type: String, trim: true, maxlength: 1000 },
 
-    // صاحب شركة
     company_name: { type: String, trim: true, maxlength: 160 },
     job_title: { type: String, trim: true, maxlength: 160 },
     job_type: { type: String, trim: true, maxlength: 160 },
     company_notes: { type: String, trim: true, maxlength: 1000 },
 
-    // 🔥 الراتب (daily + hourly + monthly + yearly)
     salary: {
       mode: {
         type: String,
@@ -50,23 +46,40 @@ const leadSchema = new Schema(
       referer: { type: String },
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Index يساعد الرايت ليمت (إيميل/تلفون/جهاز + createdAt)
-leadSchema.index({ email: 1, createdAt: -1 });
-leadSchema.index({ phone: 1, createdAt: -1 });
-leadSchema.index({ "meta.ip": 1, "meta.userAgent": 1, createdAt: -1 });
+/* ---------------------- HIGH PERFORMANCE INDEXES ----------------------- */
 
-// Validation: min <= max
+// createdAt index (أساسي لكل queries)
+leadSchema.index({ createdAt: -1 }, { background: true });
+
+// rate-limit indexes
+leadSchema.index({ email: 1, createdAt: -1 }, { background: true });
+leadSchema.index({ phone: 1, createdAt: -1 }, { background: true });
+leadSchema.index(
+  { "meta.ip": 1, "meta.userAgent": 1, createdAt: -1 },
+  { background: true }
+);
+
+// universal sparse index
+leadSchema.index(
+  { email: 1, phone: 1, "meta.ip": 1, createdAt: -1 },
+  { sparse: true, background: true }
+);
+
+// admin search indexes
+leadSchema.index({ name: 1 }, { background: true });
+leadSchema.index({ city: 1 }, { background: true });
+leadSchema.index({ seeker_role: 1 }, { background: true });
+leadSchema.index({ company_name: 1 }, { background: true });
+leadSchema.index({ job_title: 1 }, { background: true });
+
+// salary sanity check
 leadSchema.pre("validate", function (next) {
   const s = this.salary;
   if (s && s.min != null && s.max != null && s.min > s.max) {
-    return next(
-      new Error("الحد الأدنى للراتب لا يمكن أن يكون أكبر من الحد الأقصى")
-    );
+    return next(new Error("الحد الأدنى للراتب لا يمكن أن يكون أكبر من الحد الأقصى"));
   }
   next();
 });
