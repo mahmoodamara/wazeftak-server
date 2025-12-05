@@ -23,9 +23,6 @@ const MAX_PER_DAY = 5;
 /*                            Helpers: Sanitization                           */
 /* -------------------------------------------------------------------------- */
 
-/**
- * تنظيف نص: trim + إزالة المسافات الزائدة + قصّه لطول معيّن
- */
 function cleanString(value, maxLen = 200) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim().replace(/\s+/g, " ");
@@ -33,9 +30,6 @@ function cleanString(value, maxLen = 200) {
   return trimmed.slice(0, maxLen);
 }
 
-/**
- * تنظيف رقم راتب: تحويل إلى Number والتأكد أنه ليس NaN وأنه >= 0
- */
 function cleanMoney(value) {
   if (value === undefined || value === null || value === "") return undefined;
   const n = Number(value);
@@ -43,9 +37,6 @@ function cleanMoney(value) {
   return n;
 }
 
-/**
- * تنظيف الإيميل
- */
 function cleanEmail(value) {
   if (typeof value !== "string") return undefined;
   const v = value.trim().toLowerCase();
@@ -53,10 +44,6 @@ function cleanEmail(value) {
   return v.slice(0, 200);
 }
 
-/**
- * تنظيف الهاتف بشكل بسيط (إزالة المسافات والرموز الإضافية)
- * ملاحظة: ممكن لاحقًا تستبدلها بـ normalizePhoneIL زي userController
- */
 function cleanPhone(value) {
   if (typeof value !== "string") return undefined;
   const digits = value.replace(/[^\d+]/g, "");
@@ -64,9 +51,6 @@ function cleanPhone(value) {
   return digits.slice(0, 30);
 }
 
-/**
- * تنظيف / تجهيز salary من الـ body
- */
 function normalizeSalary(rawSalary) {
   if (!rawSalary || typeof rawSalary !== "object") return undefined;
 
@@ -86,7 +70,6 @@ function normalizeSalary(rawSalary) {
         : "ILS",
   };
 
-  // لو ما في ولا قيمة حقيقية، رجّع undefined بدل كائن فاضي
   if (
     normalized.min == null &&
     normalized.max == null &&
@@ -106,12 +89,10 @@ function normalizeSalary(rawSalary) {
 function pickLeadPayload(body = {}) {
   const payload = {};
 
-  // نوع الطلب
   if (body.type === "seeker" || body.type === "company") {
     payload.type = body.type;
   }
 
-  // مشترك
   const name = cleanString(body.name, 150);
   if (name) payload.name = name;
 
@@ -124,7 +105,6 @@ function pickLeadPayload(body = {}) {
   const city = cleanString(body.city, 120);
   if (city) payload.city = city;
 
-  // باحث عن عمل
   const seeker_role = cleanString(body.seeker_role, 160);
   if (seeker_role) payload.seeker_role = seeker_role;
 
@@ -134,7 +114,6 @@ function pickLeadPayload(body = {}) {
   const seeker_notes = cleanString(body.seeker_notes, 1000);
   if (seeker_notes) payload.seeker_notes = seeker_notes;
 
-  // صاحب شركة
   const company_name = cleanString(body.company_name, 160);
   if (company_name) payload.company_name = company_name;
 
@@ -147,7 +126,6 @@ function pickLeadPayload(body = {}) {
   const company_notes = cleanString(body.company_notes, 1000);
   if (company_notes) payload.company_notes = company_notes;
 
-  // الراتب
   const salary = normalizeSalary(body.salary);
   if (salary) payload.salary = salary;
 
@@ -161,22 +139,18 @@ function pickLeadPayload(body = {}) {
 function validateLead(body = {}) {
   const errors = {};
 
-  // النوع
   if (!body.type || !["seeker", "company"].includes(body.type)) {
     errors.type = "نوع الطلب غير صحيح";
   }
 
-  // الاسم
   if (!body.name || !String(body.name).trim()) {
     errors.name = "الاسم مطلوب";
   }
 
-  // الهاتف
   if (!body.phone || !String(body.phone).trim()) {
     errors.phone = "رقم الهاتف مطلوب";
   }
 
-  // بريد
   if (body.email) {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(body.email)) {
@@ -184,7 +158,6 @@ function validateLead(body = {}) {
     }
   }
 
-  // تحقق إضافي لكل نوع
   if (body.type === "seeker") {
     if (!body.seeker_role || !String(body.seeker_role).trim()) {
       errors.seeker_role = "حدّد نوع الشغل اللي بتدور عليه";
@@ -200,7 +173,6 @@ function validateLead(body = {}) {
     }
   }
 
-  // salary
   if (body.salary) {
     const s = body.salary;
     const allowedModes = ["hourly", "daily", "monthly", "yearly"];
@@ -257,24 +229,23 @@ async function checkRateLimit({ email, phone, ip, userAgent }) {
   }
 
   if (orConditions.length === 0) {
-    // لا يوجد ما نقدر نعمل عليه Rate Limit
     return { allowed: true };
   }
 
-  // 1) حد بين الطلبات (interval)
-  const recent = await Lead.findOne({
+  // 1) interval check
+  const recentExists = await Lead.exists({
     createdAt: { $gte: sinceInterval },
     $or: orConditions,
-  }).select("_id createdAt");
+  });
 
-  if (recent) {
+  if (recentExists) {
     return {
       allowed: false,
       reason: "interval",
     };
   }
 
-  // 2) حد يومي
+  // 2) daily limit
   const dailyCount = await Lead.countDocuments({
     createdAt: { $gte: sinceDay },
     $or: orConditions,
@@ -290,20 +261,71 @@ async function checkRateLimit({ email, phone, ip, userAgent }) {
   return { allowed: true };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*                    Helper: Async Email Notification (non-blocking)         */
+/* -------------------------------------------------------------------------- */
+
+// ⚡ إرسال الإيميل بالخلفية بعد ما نرجّع Response للمستخدم
+function queueLeadEmails(doc) {
+  // نفصل عن Mongoose Doc لو لزم
+  const lead =
+    doc && typeof doc.toObject === "function" ? doc.toObject() : doc;
+
+  if (!lead || !lead.email) return;
+
+  // نستخدم setImmediate عشان ما نبطئ الـ request الحالي
+  setImmediate(async () => {
+    try {
+      if (lead.type === "company" && lead.email) {
+        const html = buildCompanyRequestEmail({
+          name: lead.name,
+          company_name: lead.company_name,
+          job_title: lead.job_title,
+          city: lead.city,
+        });
+
+        await sendEmail({
+          to: lead.email,
+          subject: "تم استلام طلبكم لتوفير موظفين – منصة وظيفتك",
+          html,
+        });
+
+        console.log("📧 Company confirmation email sent to:", lead.email);
+      }
+
+      if (lead.type === "seeker" && lead.email) {
+        const html = buildSeekerRequestEmail({
+          name: lead.name,
+          seeker_role: lead.seeker_role,
+          city: lead.city,
+        });
+
+        await sendEmail({
+          to: lead.email,
+          subject: "تم استلام طلبك – منصة وظيفتك",
+          html,
+        });
+
+        console.log("📧 Seeker confirmation email sent to:", lead.email);
+      }
+    } catch (mailErr) {
+      console.error("Error sending async lead email:", mailErr);
+    }
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /*                            POST /api/leads                                 */
 /* -------------------------------------------------------------------------- */
 
 router.post("/", async (req, res) => {
   try {
-    // نتأكد أن البودي كائن
     const rawBody =
       req.body && typeof req.body === "object" ? req.body : {};
 
-    // 1) تنظيف + اختيار الحقول
     const payload = pickLeadPayload(rawBody);
 
-    // 2) فاليديشن
     const { valid, errors } = validateLead(payload);
     if (!valid) {
       return res.status(400).json({
@@ -313,7 +335,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 3) ميتاداتا: IP + User-Agent + Referer
     const ip =
       (req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
       req.ip ||
@@ -330,7 +351,6 @@ router.post("/", async (req, res) => {
         ? req.headers.referer.slice(0, 500)
         : null;
 
-    // 4) 👮‍♂️ Rate Limit لنفس الإيميل / الهاتف / الجهاز
     const rate = await checkRateLimit({
       email: payload.email,
       phone: payload.phone,
@@ -348,7 +368,6 @@ router.post("/", async (req, res) => {
       });
     }
 
-    // 5) حفظ الـ Lead
     const doc = new Lead({
       ...payload,
       meta: {
@@ -360,54 +379,15 @@ router.post("/", async (req, res) => {
 
     await doc.save();
 
-    // 6) إرسال إيميل حقيقي لصاحب الشركة إذا النوع "company" وفيه إيميل
-    if (doc.type === "company" && doc.email) {
-      try {
-        const html = buildCompanyRequestEmail({
-          name: doc.name,
-          company_name: doc.company_name,
-          job_title: doc.job_title,
-          city: doc.city,
-        });
-
-        await sendEmail({
-          to: doc.email,
-          subject: "تم استلام طلبكم لتوفير موظفين – منصة وظيفتك",
-          html,
-        });
-
-        console.log("📧 Company confirmation email sent to:", doc.email);
-      } catch (mailErr) {
-        // مهم: ما نرمي error عشان ما نخرب الـ API لو الإيميل وقع
-        console.error("Error sending company email:", mailErr);
-      }
-    }
-
-    if (doc.type === "seeker" && doc.email) {
-  try {
-    const html = buildSeekerRequestEmail({
-      name: doc.name,
-      seeker_role: doc.seeker_role,
-      city: doc.city,
-    });
-
-    await sendEmail({
-      to: doc.email,
-      subject: "تم استلام طلبك – منصة وظيفتك",
-      html,
-    });
-
-    console.log("📧 Seeker confirmation email sent to:", doc.email);
-  } catch (mailErr) {
-    console.error("Error sending seeker email:", mailErr);
-  }
-}
-
-    return res.status(201).json({
+    // ⚡ رجّع Response فورًا بدون انتظار الإيميل
+    res.status(201).json({
       ok: true,
       message: "تم استلام الطلب بنجاح.",
       leadId: doc._id,
     });
+
+    // ⚡ بعد ما نجاوب، نبعت الإيميل بالخلفية
+    queueLeadEmails(doc);
   } catch (err) {
     console.error("Error creating lead:", err);
     return res.status(500).json({
@@ -417,37 +397,23 @@ router.post("/", async (req, res) => {
   }
 });
 
-
-
-
 /* -------------------------------------------------------------------------- */
 /*                        Admin: List Leads with Filters                      */
 /* -------------------------------------------------------------------------- */
 
-/**
- * GET /api/leads/admin
- * أمثلة:
- *  - /api/leads/admin?page=1&limit=20
- *  - /api/leads/admin?type=company&q=نجار
- *  - /api/leads/admin?from=2025-11-01&to=2025-11-23
- *  - /api/leads/admin?sortBy=createdAt&sortDir=asc
- */
 router.get("/admin", auth, requireAdmin, async (req, res) => {
   try {
-    // ---------------- Pagination ----------------
     let page = parseInt(req.query.page, 10) || 1;
     let limit = parseInt(req.query.limit, 10) || 20;
 
     page = page < 1 ? 1 : page;
     limit = limit < 1 ? 1 : limit;
-    limit = limit > 100 ? 100 : limit; // ما نخلي الأدمن يسحب 1000 مرة وحدة
+    limit = limit > 100 ? 100 : limit;
 
     const skip = (page - 1) * limit;
 
-    // ---------------- Filters ----------------
     const filter = {};
 
-    // نوع الـ lead: seeker / company
     if (
       typeof req.query.type === "string" &&
       ["seeker", "company"].includes(req.query.type)
@@ -455,7 +421,6 @@ router.get("/admin", auth, requireAdmin, async (req, res) => {
       filter.type = req.query.type;
     }
 
-    // فلترة بتاريخ الإنشاء
     if (req.query.from || req.query.to) {
       filter.createdAt = {};
       if (req.query.from) {
@@ -467,26 +432,21 @@ router.get("/admin", auth, requireAdmin, async (req, res) => {
       if (req.query.to) {
         const toDate = new Date(req.query.to);
         if (!isNaN(toDate.getTime())) {
-          // نخلي النهاية آخر اليوم
           toDate.setHours(23, 59, 59, 999);
           filter.createdAt.$lte = toDate;
         }
       }
-      // لو الكائن فاضي، نشيله
       if (Object.keys(filter.createdAt).length === 0) {
         delete filter.createdAt;
       }
     }
 
-    // فلترة حسب مدينة معينة (تطابق تام)
     if (req.query.city && String(req.query.city).trim()) {
       filter.city = String(req.query.city).trim();
     }
 
-    // ---------------- Full-text-like Search ----------------
     const q = req.query.q && String(req.query.q).trim();
     if (q) {
-      // نهرب الأحرف الخاصة بريجكس
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const regex = new RegExp(escaped, "i");
 
@@ -505,7 +465,6 @@ router.get("/admin", auth, requireAdmin, async (req, res) => {
       ];
     }
 
-    // ---------------- Sorting ----------------
     const allowedSortFields = {
       createdAt: "createdAt",
       name: "name",
@@ -520,14 +479,9 @@ router.get("/admin", auth, requireAdmin, async (req, res) => {
 
     const sort = { [sortBy]: sortDir };
 
-    // ---------------- Query DB ----------------
     const [total, items] = await Promise.all([
       Lead.countDocuments(filter),
-      Lead.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(limit)
-        .lean(),
+      Lead.find(filter).sort(sort).skip(skip).limit(limit).lean(),
     ]);
 
     const totalPages = Math.ceil(total / limit) || 1;
@@ -559,9 +513,6 @@ router.get("/admin", auth, requireAdmin, async (req, res) => {
 /*                          Admin: Get Single Lead                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * GET /api/leads/admin/:id
- */
 router.get("/admin/:id", auth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -591,15 +542,6 @@ router.get("/admin/:id", auth, requireAdmin, async (req, res) => {
 /*                           Admin: Leads Statistics                          */
 /* -------------------------------------------------------------------------- */
 
-/**
- * GET /api/leads/admin/stats
- *
- * يرجع:
- *  - total: كل الطلبات
- *  - today: طلبات اليوم
- *  - byType: تقسيم حسب seeker / company
- *  - last7Days: عدد الطلبات لكل يوم في آخر 7 أيام
- */
 router.get("/admin/stats", auth, requireAdmin, async (req, res) => {
   try {
     const now = new Date();
@@ -652,10 +594,10 @@ router.get("/admin/stats", auth, requireAdmin, async (req, res) => {
           type: x._id || "unknown",
           count: x.count,
         })),
-        last7Days: last7Days.map((x) => ({
-          date: x._id,
-          count: x.count,
-        })),
+          last7Days: last7Days.map((x) => ({
+            date: x._id,
+            count: x.count,
+          })),
       },
     });
   } catch (err) {
